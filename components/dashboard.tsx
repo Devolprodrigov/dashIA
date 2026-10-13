@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react
 import {
   Activity, AlertCircle, ArrowDownRight, ArrowRight, ArrowUpRight, BarChart3,
   Bell, CalendarDays, CheckCircle2, ChevronDown, CircleHelp, Clock3, Download,
-  Factory, FileSpreadsheet, Gauge, LayoutDashboard, LogOut, Menu, RefreshCw,
+  Factory, FileSpreadsheet, Gauge, LayoutDashboard, LogOut, Menu, Plus, RefreshCw,
   Search, Settings2, ShieldCheck, SlidersHorizontal, Sparkles, Wallet, Users,
   X,
 } from "lucide-react";
@@ -283,13 +283,133 @@ function DemoTable({ search }: { search: string }) {
 }
 
 function SourcesView({ mode, sources, loading, onRefresh }: { mode: string; sources: SourceData[]; loading: boolean; onRefresh: () => void }) {
-  return <section className="sources-page"><div className="panel source-intro"><div className="source-intro-icon"><FileSpreadsheet size={22} /></div><div><h2>Central de fontes</h2><p>Gerencie a conexão do portal com as planilhas que alimentam os dashboards. As credenciais são lidas somente no servidor.</p></div><button className="button button-light" onClick={onRefresh}><RefreshCw size={15} /> Testar conexão</button></div>
-    {mode === "demo" ? <div className="connect-guide"><div className="guide-heading"><span className="guide-step">01</span><div><h3>Conecte seu Google Sheets</h3><p>Esta versão está preparada para ler várias planilhas privadas pela API oficial do Google.</p></div></div><div className="guide-steps"><div><span>1</span><strong>Ative a API</strong><p>No Google Cloud Console, habilite Google Sheets API e crie uma conta de serviço.</p></div><div><span>2</span><strong>Compartilhe as planilhas</strong><p>Adicione o e-mail da conta de serviço como Leitor em cada planilha.</p></div><div><span>3</span><strong>Configure a Vercel</strong><p>Cadastre as variáveis do arquivo <code>.env.example</code> nas configurações do projeto.</p></div></div><div className="guide-note"><ShieldCheck size={18} /><p><strong>Privacidade:</strong> não deixe suas planilhas públicas. Antes da conexão real, configure a senha do portal e o segredo da sessão.</p></div><a className="guide-link" href="https://console.cloud.google.com/apis/library/sheets.googleapis.com" target="_blank" rel="noreferrer">Abrir Google Sheets API <ArrowRight size={15} /></a></div> : <div className="source-grid">{sources.map((source) => <article className="panel source-card" key={source.name}><div className="source-card-top"><div className="source-file-icon"><FileSpreadsheet size={19} /></div><span className={`source-status ${source.status}`}>{source.status === "ok" ? <><CheckCircle2 size={13} /> Conectada</> : <><AlertCircle size={13} /> Com erro</>}</span></div><h3>{source.name}</h3><p>{source.headers.length} colunas identificadas · {formatNumber(source.rowCount)} registros</p>{source.error && <div className="source-error">{source.error}</div>}<div className="source-card-bottom"><span>Intervalo consultado</span><strong>{source.headers.length ? `${source.headers.length} campos` : "Sem cabeçalho"}</strong></div></article>)}</div>}
-    {loading && <div className="loading-inline"><RefreshCw size={15} className="spin" /> Atualizando fontes…</div>}
-    <div className="source-security"><div className="security-shield"><ShieldCheck size={19} /></div><div><strong>Segurança dos dados</strong><p>A integração usa permissão de leitura. IDs e credenciais devem ficar em variáveis de ambiente, nunca no código do navegador ou em repositório público.</p></div></div>
-  </section>;
+  const [sheetName, setSheetName] = useState("");
+  const [sheetLink, setSheetLink] = useState("");
+  const [sheetRange, setSheetRange] = useState("A:Z");
+  const [savedMessage, setSavedMessage] = useState("");
+
+  const handleAddSource = (e: React.FormEvent) => {
+    e.preventDefault();
+    // Extrai o ID do link colado do Google Sheets
+    const match = sheetLink.match(/\/d\/([a-zA-Z0-9-_]+)/);
+    if (!match || !match[1]) {
+      alert("Link do Google Sheets inválido. Certifique-se de colar o endereço completo.");
+      return;
+    }
+    const spreadsheetId = match[1];
+    const newSource = { name: sheetName, spreadsheetId, range: sheetRange };
+    
+    // Salva temporariamente no localStorage para uso imediato no navegador
+    const existing = JSON.parse(localStorage.getItem("custom_sheets") || "[]");
+    existing.push(newSource);
+    localStorage.setItem("custom_sheets", JSON.stringify(existing));
+    
+    setSavedMessage("Fonte adicionada! Atualize a página para carregar.");
+    setSheetName("");
+    setSheetLink("");
+  };
+
+  return (
+    <section className="sources-page">
+      <div className="panel source-intro">
+        <div className="source-intro-icon"><FileSpreadsheet size={22} /></div>
+        <div>
+          <h2>Central de Fontes por Link</h2>
+          <p>Cole o link da sua planilha do Google Sheets abaixo para integrá-la instantaneamente ao painel.</p>
+        </div>
+        <button className="button button-light" onClick={onRefresh}><RefreshCw size={15} /> Testar conexão</button>
+      </div>
+
+      {/* Formulário para colar o link */}
+      <div className="panel" style={{ padding: "24px", marginBottom: "24px" }}>
+        <h3 style={{ marginBottom: "16px", fontSize: "16px", display: "flex", alignItems: "center", gap: "8px" }}>
+          <Plus size={18} /> Adicionar Nova Planilha por Link
+        </h3>
+        <form onSubmit={handleAddSource} style={{ display: "grid", gap: "16px" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr 1fr", gap: "12px" }}>
+            <div>
+              <label style={{ display: "block", fontSize: "12px", fontWeight: 600, marginBottom: "6px" }}>Nome da Fonte</label>
+              <input 
+                type="text" 
+                placeholder="Ex: Operacional" 
+                value={sheetName} 
+                onChange={(e) => setSheetName(e.target.value)} 
+                required 
+                style={{ width: "100%", padding: "10px", borderRadius: "8px", border: "1px solid #d1d5db", fontSize: "14px" }}
+              />
+            </div>
+            <div>
+              <label style={{ display: "block", fontSize: "12px", fontWeight: 600, marginBottom: "6px" }}>Link do Google Sheets</label>
+              <input 
+                type="url" 
+                placeholder="https://docs.google.com/spreadsheets/d/..." 
+                value={sheetLink} 
+                onChange={(e) => setSheetLink(e.target.value)} 
+                required 
+                style={{ width: "100%", padding: "10px", borderRadius: "8px", border: "1px solid #d1d5db", fontSize: "14px" }}
+              />
+            </div>
+            <div>
+              <label style={{ display: "block", fontSize: "12px", fontWeight: 600, marginBottom: "6px" }}>Aba / Intervalo</label>
+              <input 
+                type="text" 
+                placeholder="Ex: Dados!A:Z" 
+                value={sheetRange} 
+                onChange={(e) => setSheetRange(e.target.value)} 
+                required 
+                style={{ width: "100%", padding: "10px", borderRadius: "8px", border: "1px solid #d1d5db", fontSize: "14px" }}
+              />
+            </div>
+          </div>
+          <button type="submit" className="button button-dark" style={{ justifySelf: "start", marginTop: "4px" }}>
+            Salvar e Conectar Planilha
+          </button>
+          {savedMessage && <p style={{ color: "#21a67a", fontSize: "13px", fontWeight: 500 }}>{savedMessage}</p>}
+        </form>
+      </div>
+
+      <div className="source-grid">
+        {sources.map((source) => (
+          <article className="panel source-card" key={source.name}>
+            <div className="source-card-top">
+              <div className="source-file-icon"><FileSpreadsheet size={19} /></div>
+              <span className={`source-status ${source.status}`}>
+                {source.status === "ok" ? <><CheckCircle2 size={13} /> Conectada</> : <><AlertCircle size={13} /> Com erro</>}
+              </span>
+            </div>
+            <h3>{source.name}</h3>
+            <p>{source.headers.length} colunas identificadas · {formatNumber(source.rowCount)} registros</p>
+            {source.error && <div className="source-error">{source.error}</div>}
+            <div className="source-card-bottom">
+              <span>Intervalo consultado</span>
+              <strong>{source.headers.length ? `${source.headers.length} campos` : "Sem cabeçalho"}</strong>
+            </div>
+          </article>
+        ))}
+      </div>
+
+      {loading && <div className="loading-inline"><RefreshCw size={15} className="spin" /> Atualizando fontes…</div>}
+      <div className="source-security">
+        <div className="security-shield"><ShieldCheck size={19} /></div>
+        <div>
+          <strong>Facilidade e Segurança</strong>
+          <p>Lembre-se de compartilhar cada planilha adicionada com o e-mail da sua conta de serviço para permitir a leitura via API.</p>
+        </div>
+      </div>
+    </section>
+  );
 }
 
 function SettingsView() {
-  return <section className="settings-page"><div className="panel settings-intro"><div className="settings-intro-icon"><Settings2 size={23} /></div><div><h2>Configurações do portal</h2><p>Esta versão inicial usa variáveis de ambiente para manter as credenciais privadas e facilitar a implantação na Vercel.</p></div></div><div className="settings-grid"><article className="panel settings-card"><span className="setting-index">01 / ACESSO</span><h3>Proteção por senha</h3><p>Configure uma senha de acesso compartilhada e uma chave de sessão forte para impedir o acesso público aos dados reais.</p><div className="setting-code">DASHBOARD_PASSWORD<br />DASHBOARD_SESSION_SECRET</div><span className="setting-status"><ShieldCheck size={15} /> Configuração por ambiente</span></article><article className="panel settings-card"><span className="setting-index">02 / DADOS</span><h3>Fontes do Google Sheets</h3><p>Cadastre uma ou mais planilhas, com o nome amigável, o ID e o intervalo de células a ser lido.</p><div className="setting-code">GOOGLE_SERVICE_ACCOUNT_EMAIL<br />GOOGLE_PRIVATE_KEY<br />SHEETS_SOURCES_JSON</div><span className="setting-status"><FileSpreadsheet size={15} /> API somente leitura</span></article><article className="panel settings-card"><span className="setting-index">03 / ATUALIZAÇÃO</span><h3>Consulta sob demanda</h3><p>O botão Atualizar consulta as fontes novamente. Depois, podemos configurar cache, agendamento e histórico de dados conforme o volume.</p><div className="setting-code">Atualizar → consultar API → renderizar</div><span className="setting-status"><RefreshCw size={15} /> Atualização manual nesta versão</span></article></div><div className="settings-note"><AlertCircle size={18} /><div><strong>Personalização necessária antes de produção</strong><p>Os nomes das colunas, fórmulas dos KPIs, metas e regras de consolidação serão ajustados quando as planilhas reais forem analisadas. Não use os indicadores de demonstração como resultado corporativo.</p></div></div></section>;
+  return (
+    <section className="settings-page">
+      <div className="panel settings-intro">
+        <div className="settings-intro-icon"><Settings2 size={23} /></div>
+        <div>
+          <h2>Configurações do portal</h2>
+          <p>Gerencie suas fontes de dados de forma simples direto pela aba "Fontes de dados".</p>
+        </div>
+      </div>
+    </section>
+  );
 }
