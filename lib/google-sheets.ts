@@ -3,26 +3,60 @@ import type { SheetCell, SheetSource, SourceData } from "@/lib/types";
 
 const MAX_ROWS_PER_SOURCE = 1000;
 
+// Extrai o ID da planilha automaticamente caso o usuário cole o link completo
+function extractSpreadsheetId(input: string): string {
+  const trimmed = input.trim();
+  // Se for uma URL do Google Sheets, extrai o ID entre /d/ e a próxima barra
+  const match = trimmed.match(/\/d\/([a-zA-Z0-9-_]+)/);
+  if (match && match[1]) {
+    return match[1];
+  }
+  // Caso contrário, assume que já é o ID puro
+  return trimmed;
+}
+
 function parseSources(raw: string | undefined): SheetSource[] {
   if (!raw) return [];
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch {
-    throw new Error("SHEETS_SOURCES_JSON não contém um JSON válido.");
+    // Se não for JSON, tenta tratar o texto cru como um link único ou ID único
+    const id = extractSpreadsheetId(raw);
+    if (id) {
+      return [{ name: "Planilha Principal", spreadsheetId: id, range: "A:Z" }];
+    }
+    throw new Error("SHEETS_SOURCES_JSON não contém um formato válido.");
   }
+  
   if (!Array.isArray(parsed)) throw new Error("SHEETS_SOURCES_JSON precisa ser uma lista JSON.");
 
   return parsed.map((item, index) => {
+    if (typeof item === "string") {
+      // Se a lista contiver apenas strings (links ou IDs)
+      const id = extractSpreadsheetId(item);
+      return {
+        name: `Planilha ${index + 1}`,
+        spreadsheetId: id,
+        range: "A:Z",
+      };
+    }
+
     if (!item || typeof item !== "object") throw new Error(`Fonte ${index + 1} inválida.`);
     const source = item as Record<string, unknown>;
-    if (typeof source.name !== "string" || typeof source.spreadsheetId !== "string" || typeof source.range !== "string") {
-      throw new Error(`Fonte ${index + 1}: informe name, spreadsheetId e range.`);
+    
+    const rawId = String(source.spreadsheetId || source.link || source.url || "");
+    const spreadsheetId = extractSpreadsheetId(rawId);
+    
+    if (!spreadsheetId) {
+      throw new Error(`Fonte ${index + 1}: informe um link ou ID de planilha válido.`);
     }
+
     return {
-      name: source.name.trim(),
-      spreadsheetId: source.spreadsheetId.trim(),
-      range: source.range.trim(),
+      name: String(source.name || `Planilha ${index + 1}`).trim(),
+      spreadsheetId,
+      // Se não informar o intervalo, busca por "A:Z" na primeira aba automaticamente
+      range: String(source.range || "A:Z").trim(),
     };
   });
 }
@@ -71,10 +105,21 @@ export async function readConfiguredSources(): Promise<SourceData[]> {
   if (sources.length === 0) throw new Error("Nenhuma fonte foi definida em SHEETS_SOURCES_JSON.");
 
   return Promise.all(sources.map(async (source): Promise<SourceData> => {
+    let targetRange = source.range;
+
     try {
+      // Se o range não especificar uma aba (não tiver '!'), descobre o nome da primeira aba automaticamente
+      if (!targetRange.includes("!")) {
+        const meta = await sheets.spreadsheets.get({ spreadsheetId: source.spreadsheetId });
+        const firstSheetName = meta.data.sheets?.[0]?.properties?.title;
+        if (firstSheetName) {
+          targetRange = `${firstSheetName}!${targetRange}`;
+        }
+      }
+
       const result = await sheets.spreadsheets.values.get({
         spreadsheetId: source.spreadsheetId,
-        range: source.range,
+        range: targetRange,
         majorDimension: "ROWS",
         valueRenderOption: "UNFORMATTED_VALUE",
       });
@@ -91,7 +136,7 @@ export async function readConfiguredSources(): Promise<SourceData[]> {
     } catch (error) {
       const message = error instanceof Error ? error.message : "Falha ao ler a planilha.";
       console.error(`[Google Sheets] Fonte "${source.name}":`, message);
-      return { name: source.name, rowCount: 0, headers: [], rows: [], status: "error", error: "Não foi possível ler esta fonte. Confira o ID, intervalo e permissões." };
+      return { name: source.name, rowCount: 0, headers: [], rows: [], status: "error", error: "Não foi possível ler esta fonte. Verifique se compartilhou a planilha com a conta de serviço." };
     }
   }));
 }
